@@ -2,29 +2,31 @@ import sys
 import json
 import pika
 
-EXCHANGE_NAME = "integration_output_exchange"
-QUEUE_NAME = "Playground"
-
 HELP_TEXT = """
 Usage:
-    python rabbitmq_app.py <publisher|consumer> [queue_name]
+    python main.py <publisher|consumer> <exchange_name> [queue_name]
 
 Arguments:
-    publisher   Run in publisher mode to send messages.
-    consumer    Run in consumer mode to receive messages.
-    queue_name  (Optional) Specify a queue name (default: Playground).
+    publisher     Run in publisher mode to send messages.
+    consumer      Run in consumer mode to receive messages.
+    exchange_name The name of the exchange where messages should be published.
+    queue_name    (Optional) Specify a queue name (default: Playground).
 
 Examples:
-    python rabbitmq_app.py publisher
-    python rabbitmq_app.py consumer MyQueue
+    python main.py publisher my_exchange
+    python main.py consumer my_exchange MyQueue
 
 Options:
-    --help      Show this help message and exit.
+    --help        Show this help message and exit.
 """
 
+DEFAULT_QUEUE_NAME = "Playground"
+
+
 class RabbitMQService:
-    def __init__(self, config):
+    def __init__(self, config, exchange_name):
         self.config = config
+        self.exchange_name = exchange_name
         self.connection = self.create_connection()
         self.channel = self.create_channel()
 
@@ -34,27 +36,31 @@ class RabbitMQService:
                 host=self.config["host"],
                 port=self.config["port"],
                 virtual_host=self.config["virtual_host"],
-                credentials=pika.PlainCredentials(self.config["user"], self.config["password"]),
+                credentials=pika.PlainCredentials(
+                    self.config["user"], self.config["password"]
+                ),
             )
         )
 
     def create_channel(self):
         channel = self.connection.channel()
-        channel.exchange_declare(exchange=EXCHANGE_NAME, exchange_type="fanout", durable=True)
+        channel.exchange_declare(
+            exchange=self.exchange_name, exchange_type="fanout", durable=True
+        )
         return channel
 
     def publish_message(self, message):
         self.channel.basic_publish(
-            exchange=EXCHANGE_NAME,
+            exchange=self.exchange_name,
             routing_key="",
             body=json.dumps(message),
-            properties=pika.BasicProperties(delivery_mode=2)  # Make message persistent
+            properties=pika.BasicProperties(delivery_mode=2),  # Persistent message
         )
         print("Message published successfully.")
 
     def consume_messages(self, queue_name):
         self.channel.queue_declare(queue=queue_name, durable=True)
-        self.channel.queue_bind(exchange=EXCHANGE_NAME, queue=queue_name)
+        self.channel.queue_bind(exchange=self.exchange_name, queue=queue_name)
 
         def callback(ch, method, properties, body):
             print(f"Received message: {body.decode()}")
@@ -67,27 +73,28 @@ class RabbitMQService:
         self.channel.start_consuming()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     if "--help" in sys.argv:
         print(HELP_TEXT)
         sys.exit(0)
 
-    if len(sys.argv) < 2 or len(sys.argv) > 3:
+    if len(sys.argv) < 3 or len(sys.argv) > 4:
         print("Invalid arguments.\n" + HELP_TEXT)
         sys.exit(1)
+
+    mode = sys.argv[1].lower()
+    exchange_name = sys.argv[2]
+    queue_name = sys.argv[3] if len(sys.argv) == 4 else DEFAULT_QUEUE_NAME
 
     config = {
         "host": "localhost",
         "user": "guest",
         "password": "guest",
         "port": 5672,
-        "virtual_host": "/"
+        "virtual_host": "/",
     }
 
-    mode = sys.argv[1].lower()
-    queue_name = sys.argv[2] if len(sys.argv) == 3 else QUEUE_NAME
-
-    rabbitmq_service = RabbitMQService(config)
+    rabbitmq_service = RabbitMQService(config, exchange_name)
 
     if mode == "publisher":
         while True:
